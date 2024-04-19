@@ -5,12 +5,13 @@ workers = 8
 keep_alive = 5
 read_timeout = 5
 write_timeout = 5
-log = "normal"
+log_level = "debug"
 limits = { forms = 32768 }
 
 
 [default.oauth.github]
-provider = "GitHub"
 client_id = "7adc7fd9713d21632430"
 client_secret = "9158e79f814e20b708b309e85ca2fa59dc3623d3"
+auth_url = "https://github.com/login/oauth/authorize"
 redirect_uri = "https://rocket-oauth2-example.magierdinge.de/auth/github"
+token_url = "https://github.com/login/oauth/access_token"

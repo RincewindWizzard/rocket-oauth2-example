@@ -5,7 +5,9 @@ edition = "2021"
 
 
 [dependencies]
-rocket = "0.5.0"
+rocket = { version = "0.5.0", features = ["secrets"] }
 rocket_dyn_templates = { version = "0.1.0", features = ["handlebars"] }
-rocket_oauth2 = "0.5.0"
+oauth2 = "4.4.2"
+serde = { version = "1.0", features = ["derive"] }
+anyhow = "1.0.82"
 
