@@ -5,32 +5,60 @@ use std::env;
 
 use anyhow::anyhow;
 use oauth2::basic::BasicClient;
-use rocket::Config;
+use oauth2::{AuthorizationCode, CsrfToken, PkceCodeChallenge, Scope, TokenResponse};
+use rocket::{Config, State};
 use rocket::figment::Figment;
 use rocket::fs::{FileServer, relative};
 use rocket::http::{Cookie, CookieJar, SameSite};
+use rocket::http::uri::Query;
 use rocket::response::Redirect;
 use rocket_dyn_templates::{context, Template};
 use serde::Deserialize;
+use oauth2::reqwest::async_http_client;
 
+#[derive(Debug)]
 struct ApplicationState {
     oauth2: BasicClient,
 }
 
 #[get("/login/github")]
-fn github_login(cookies: &CookieJar<'_>) -> Redirect {
-    // oauth2.get_redirect(cookies, &["user:read"]).unwrap()
-    Redirect::to("/")
+fn github_login(state: &State<ApplicationState>, cookies: &CookieJar<'_>) -> Redirect {
+    let oauth2 = &state.oauth2;
+
+    let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
+
+    let (github_auth_url, csrf_token) = oauth2.authorize_url(CsrfToken::new_random)
+        .add_scope(Scope::new("user:read".to_string()))
+        .set_pkce_challenge(pkce_challenge)
+        .url();
+
+    Redirect::to(github_auth_url.to_string())
 }
 
-#[get("/auth/github")]
-fn github_callback(cookies: &CookieJar<'_>) -> Redirect
+
+#[get("/auth/github?<code>&<state>")]
+async fn github_callback(application_state: &State<ApplicationState>, cookies: &CookieJar<'_>, code: &str, state: &str) -> Redirect
 {
-    // cookies.add_private(
-    //     Cookie::build(("token", token.access_token().to_string()))
-    //         .same_site(SameSite::Lax)
-    //         .build()
-    // );
+    let oauth2 = &application_state.oauth2;
+
+
+    let token = oauth2
+        .exchange_code(AuthorizationCode::new(code.to_string()))
+        .request_async(async_http_client)
+        .await;
+
+    if let Ok(token) = token {
+        let secret = token.access_token().secret().clone();
+        debug!("Token: {token:?}");
+        cookies.add_private(
+            Cookie::build(("token", secret))
+                .same_site(SameSite::Lax)
+                .build()
+        );
+    } else {
+        warn!("Could not retrieve token!");
+    }
+
     Redirect::to("/")
 }
 
@@ -87,6 +115,8 @@ fn rocket() -> _ {
     let rocket = rocket::build();
     let figment = rocket.figment();
     let oauth2 = oauth2_client(figment).expect("OAuth2 config could not be loaded!");
+
+    println!("Oauth2: {:?}", oauth2);
 
 
     rocket
