@@ -1,3 +1,5 @@
+mod github_api;
+
 #[macro_use]
 extern crate rocket;
 
@@ -8,18 +10,21 @@ use oauth2::basic::BasicClient;
 use oauth2::{AuthorizationCode, CsrfToken, PkceCodeChallenge, Scope, TokenResponse};
 use rocket::{Config, State};
 use rocket::figment::Figment;
-use rocket::fs::{FileServer, relative};
+use rocket::fs::FileServer;
+use rocket::fs::relative;
 use rocket::http::{Cookie, CookieJar, SameSite};
 use rocket::http::uri::Query;
 use rocket::response::Redirect;
 use rocket_dyn_templates::{context, Template};
 use serde::Deserialize;
 use oauth2::reqwest::async_http_client;
+use crate::github_api::GithubClient;
 
 #[derive(Debug)]
 struct ApplicationState {
     oauth2: BasicClient,
 }
+
 
 #[get("/login/github")]
 fn github_login(state: &State<ApplicationState>, cookies: &CookieJar<'_>) -> Redirect {
@@ -41,20 +46,32 @@ async fn github_callback(application_state: &State<ApplicationState>, cookies: &
 {
     let oauth2 = &application_state.oauth2;
 
-
     let token = oauth2
         .exchange_code(AuthorizationCode::new(code.to_string()))
         .request_async(async_http_client)
         .await;
 
     if let Ok(token) = token {
-        let secret = token.access_token().secret().clone();
-        debug!("Token: {token:?}");
+        let token = token.access_token().secret().clone();
+
         cookies.add_private(
-            Cookie::build(("token", secret))
+            Cookie::build(("token", token.clone()))
                 .same_site(SameSite::Lax)
                 .build()
         );
+
+        let github = GithubClient::new(&token);
+        if let Ok(user) = github.get_user().await {
+            debug!("Welcome {:?}", user);
+            info!("Welcome {:?}", user.login);
+            cookies.add_private(
+                Cookie::build(("username", user.login))
+                    .same_site(SameSite::Lax)
+                    .build()
+            );
+        } else {
+            warn!("Could not retrieve username!");
+        };
     } else {
         warn!("Could not retrieve token!");
     }
@@ -65,18 +82,29 @@ async fn github_callback(application_state: &State<ApplicationState>, cookies: &
 #[get("/logout")]
 fn logout(cookies: &CookieJar<'_>) -> Redirect {
     cookies.remove_private(Cookie::build("token"));
+    cookies.remove_private(Cookie::build("username"));
     Redirect::to("/")
 }
 
 #[get("/")]
 fn index(cookies: &CookieJar<'_>) -> Template {
-    let logged_in = if let Some(_) = cookies.get("token") {
+    let logged_in = if let Some(_) = cookies.get_private("token") {
         true
     } else {
         false
     };
+
+
+    let username = if let Some(cookie) = cookies.get_private("username") {
+        let value = cookie.value_trimmed();
+        Some(value.to_string())
+    } else {
+        None
+    };
+
     Template::render("index", context! {
         logged_in: logged_in,
+        username: username,
     })
 }
 
