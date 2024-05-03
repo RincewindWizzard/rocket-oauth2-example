@@ -75,11 +75,22 @@ impl<'r, T> FromRequest<'r> for Session<T>
                 .cookies()
                 .get_private("sid")
                 .map(|c| c.value().to_string())
+                .map(|sid| {
+                    info!("Session Id found: {}", sid);
+                    sid
+                })
                 .map(|sid| Uuid::parse_str(&*sid).ok())
                 .flatten()
-                .unwrap_or_else(|| Uuid::new_v4());
+                .unwrap_or_else(|| {
+                    info!("Create new session id. {:?}", request.cookies());
+                    Uuid::new_v4()
+                });
 
+            info!("Session ID: {}", sid);
             let session = session_manager.get_session(sid).await;
+            assert!(sid == session.id);
+
+            request.cookies().add_private(("sid", session.id.to_string()));
             Outcome::Success(session)
         } else {
             Outcome::Error((Status::InternalServerError, anyhow!("Could not get application state!")))

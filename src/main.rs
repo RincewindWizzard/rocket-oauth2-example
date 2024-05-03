@@ -110,18 +110,21 @@ fn logout(cookies: &CookieJar<'_>) -> Redirect {
 
 #[get("/")]
 async fn index(mut session: Session<SessionData>) -> Template {
-    let session_data = {
-        let mut session_data = session.value.lock().await;
-        session_data.visits = session_data.visits + 1;
-            session_data.clone()
-    };
+    let mut session_data = session.value.lock().await;
+    session_data.visits = session_data.visits + 1;
+
     info!("Session: {:?}", session_data);
 
-    let username = session_data.user.map(|user| user.login);
+
+    let username = if let Some(user) = &session_data.user {
+        user.login.clone()
+    } else {
+        "".to_string()
+    };
 
     Template::render("index", context! {
-        logged_in: username.is_some(),
-        username: username.unwrap_or("".to_string()),
+        logged_in: session_data.user.is_some(),
+        username: username,
     })
 }
 
