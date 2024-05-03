@@ -9,7 +9,7 @@ use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
 
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct User {
     pub login: String,
     pub avatar_url: String,

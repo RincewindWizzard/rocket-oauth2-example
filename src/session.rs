@@ -19,6 +19,12 @@ pub struct Session<T> {
     pub value: Arc<Mutex<T>>,
 }
 
+impl<T> Session<T> {
+    pub fn get_id(&self) -> Uuid {
+        self.id
+    }
+}
+
 impl<T> Default for SessionManager<T> {
     fn default() -> Self {
         SessionManager {
