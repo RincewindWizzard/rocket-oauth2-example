@@ -1,10 +1,12 @@
 mod github_api;
 mod timeout_set;
 mod stash;
+mod session;
 
 #[macro_use]
 extern crate rocket;
 
+use crate::session::Session;
 use std::sync::Arc;
 use std::env;
 use std::time::{Duration, Instant};
@@ -27,6 +29,7 @@ use std::collections::HashMap;
 use rocket::futures::lock::Mutex;
 use rocket::request::{FromRequest, Outcome};
 use uuid::Uuid;
+use crate::session::SessionManager;
 use crate::timeout_set::TimeoutSet;
 
 const CSRF_TIMEOUT: Duration = Duration::from_secs(60 * 10);
@@ -34,29 +37,9 @@ const CSRF_TIMEOUT: Duration = Duration::from_secs(60 * 10);
 #[derive(Debug)]
 struct ApplicationState {
     oauth2: BasicClient,
-    sessions: Mutex<HashMap<Uuid, Session>>,
+    // sessions: SessionManager<SessionData>,
 }
 
-#[derive(Debug, Clone)]
-struct Session {
-    id: Uuid,
-    value: Arc<Mutex<SessionData>>,
-}
-
-impl ApplicationState {
-    async fn get_session(&self, sid: Uuid) -> Session {
-        let mut sessions = self.sessions.lock().await;
-        let session = sessions.entry(sid).or_insert_with(|| Session {
-            id: sid,
-            value: Arc::new(Mutex::new(SessionData {
-                foo: 0,
-            })),
-        });
-
-
-        session.clone()
-    }
-}
 
 #[derive(Debug)]
 struct SessionData {
@@ -65,44 +48,14 @@ struct SessionData {
     foo: i64,
 }
 
-impl Session {
-    fn new() -> Session {
-        Session {
-            id: Uuid::new_v4(),
-            value: Arc::new(Mutex::new(SessionData {
-                foo: 0,
-            })),
-        }
-    }
-
-    async fn foo(&self) -> i64 {
-        let mut value = self.value.lock().await;
-        value.foo = value.foo + 1;
-        value.foo
-    }
-}
-
-#[rocket::async_trait]
-impl<'r> FromRequest<'r> for Session {
-    type Error = anyhow::Error;
-
-    async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
-        if let Outcome::Success(application_state) = request.guard::<&State<ApplicationState>>().await {
-            let sid = request
-                .cookies()
-                .get_private("sid")
-                .map(|c| c.value().to_string())
-                .map(|sid| Uuid::parse_str(&*sid).ok())
-                .flatten()
-                .unwrap_or_else(|| Uuid::new_v4());
-
-            let session = application_state.get_session(sid).await;
-            Outcome::Success(session)
-        } else {
-            Outcome::Error((Status::InternalServerError, anyhow!("Could not get application state!")))
+impl Default for SessionData {
+    fn default() -> Self {
+        SessionData {
+            foo: 0,
         }
     }
 }
+
 
 #[get("/logout")]
 fn logout(cookies: &CookieJar<'_>) -> Redirect {
@@ -112,9 +65,12 @@ fn logout(cookies: &CookieJar<'_>) -> Redirect {
 }
 
 #[get("/")]
-async fn index(cookies: &CookieJar<'_>, mut session: Session) -> Template {
-
-    let foo = session.foo().await;
+async fn index(cookies: &CookieJar<'_>, mut session: Session<SessionData>) -> Template {
+    let foo = {
+        let mut session_data = session.value.lock().await;
+        session_data.foo = session_data.foo + 1;
+        session_data.foo
+    };
     info!("Session: {:?}", foo);
 
     Template::render("index", context! {
@@ -164,8 +120,8 @@ fn rocket() -> _ {
     rocket
         .manage(ApplicationState {
             oauth2,
-            sessions: Mutex::new(HashMap::new()),
         })
+        .manage::<SessionManager<SessionData>>(SessionManager::default())
         .mount("/", FileServer::from(relative!("static")))
         .mount("/", routes![index,  logout])
         .attach(Template::fairing())

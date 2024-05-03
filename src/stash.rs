@@ -6,7 +6,7 @@ use rocket::response::Redirect;
 use rocket::State;
 use rocket_dyn_templates::{context, Template};
 use serde_derive::Deserialize;
-use crate::{ApplicationState, Session};
+use crate::{ApplicationState};
 
 #[get("/login/github")]
 fn github_login(application_state: &State<ApplicationState>, cookies: &CookieJar<'_>) -> Redirect {
