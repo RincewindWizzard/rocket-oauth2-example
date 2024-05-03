@@ -103,7 +103,7 @@ fn github_login(oauth: &State<OAuth>, session: Session<SessionData>) -> Redirect
 
 #[get("/logout")]
 fn logout(cookies: &CookieJar<'_>) -> Redirect {
-    // cookies.remove_private(Cookie::build("sid"));
+    cookies.remove_private(Cookie::build("sid"));
     Redirect::to("/")
 }
 
