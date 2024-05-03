@@ -1,9 +1,10 @@
+use rocket::http::SameSite;
 use std::collections::HashMap;
 use std::sync::Arc;
 use anyhow::anyhow;
 use rocket::futures::lock::Mutex;
 use rocket::{Request, State};
-use rocket::http::Status;
+use rocket::http::{Cookie, Status};
 use rocket::request::{FromRequest, Outcome};
 use uuid::Uuid;
 
@@ -88,9 +89,11 @@ impl<'r, T> FromRequest<'r> for Session<T>
 
             info!("Session ID: {}", sid);
             let session = session_manager.get_session(sid).await;
-            assert!(sid == session.id);
 
-            request.cookies().add_private(("sid", session.id.to_string()));
+            request.cookies().add_private(
+                Cookie::build(("sid", session.id.to_string()))
+                    .same_site(SameSite::Lax)
+                    .build());
             Outcome::Success(session)
         } else {
             Outcome::Error((Status::InternalServerError, anyhow!("Could not get application state!")))

@@ -103,29 +103,32 @@ fn github_login(oauth: &State<OAuth>, session: Session<SessionData>) -> Redirect
 
 #[get("/logout")]
 fn logout(cookies: &CookieJar<'_>) -> Redirect {
-    cookies.remove_private(Cookie::build("sid"));
+    // cookies.remove_private(Cookie::build("sid"));
     Redirect::to("/")
 }
 
 
 #[get("/")]
 async fn index(mut session: Session<SessionData>) -> Template {
-    let mut session_data = session.value.lock().await;
-    session_data.visits = session_data.visits + 1;
+    let context = {
+        let mut session_data = session.value.lock().await;
+        session_data.visits = session_data.visits + 1;
 
-    info!("Session: {:?}", session_data);
+        info!("Session: {:?}", session_data);
 
 
-    let username = if let Some(user) = &session_data.user {
-        user.login.clone()
-    } else {
-        "".to_string()
+        let username = if let Some(user) = &session_data.user {
+            user.login.clone()
+        } else {
+            "".to_string()
+        };
+        context! {
+            logged_in: session_data.user.is_some(),
+            username: username,
+        }
     };
 
-    Template::render("index", context! {
-        logged_in: session_data.user.is_some(),
-        username: username,
-    })
+    Template::render("index", context)
 }
 
 
