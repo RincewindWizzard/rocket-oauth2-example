@@ -1,9 +1,11 @@
 mod github_api;
 mod timeout_set;
+mod stash;
 
 #[macro_use]
 extern crate rocket;
 
+use std::sync::Arc;
 use std::env;
 use std::time::{Duration, Instant};
 
@@ -35,38 +37,48 @@ struct ApplicationState {
     sessions: Mutex<HashMap<Uuid, Session>>,
 }
 
-impl ApplicationState {
-    // fn add_session(&mut self, session: Session) {
-    //     self.sessions.insert(session.id, session);
-    // }
-
-    // fn get_or_create_session(&self, sid: Option<String>) -> &Session {
-    //     let sid = sid
-    //         .map(|sid| Uuid::parse_str(&sid).ok())
-    //         .flatten()
-    //         .unwrap_or_else(|| { Uuid::new_v4() });
-    //
-    //     let mut sessions = &mut self.sessions;
-    //
-    //     let session = sessions.entry(sid).or_insert_with(|| Session::new());
-    //     session
-    // }
-}
-
 #[derive(Debug, Clone)]
 struct Session {
     id: Uuid,
+    value: Arc<Mutex<SessionData>>,
+}
+
+impl ApplicationState {
+    async fn get_session(&self, sid: Uuid) -> Session {
+        let mut sessions = self.sessions.lock().await;
+        let session = sessions.entry(sid).or_insert_with(|| Session {
+            id: sid,
+            value: Arc::new(Mutex::new(SessionData {
+                foo: 0,
+            })),
+        });
+
+
+        session.clone()
+    }
+}
+
+#[derive(Debug)]
+struct SessionData {
     // pkce_verifier: Option<PkceCodeVerifier>,
     // csrf_token: Option<CsrfToken>,
+    foo: i64,
 }
 
 impl Session {
     fn new() -> Session {
         Session {
             id: Uuid::new_v4(),
-            // pkce_verifier: None,
-            // csrf_token: None,
+            value: Arc::new(Mutex::new(SessionData {
+                foo: 0,
+            })),
         }
+    }
+
+    async fn foo(&self) -> i64 {
+        let mut value = self.value.lock().await;
+        value.foo = value.foo + 1;
+        value.foo
     }
 }
 
@@ -84,102 +96,12 @@ impl<'r> FromRequest<'r> for Session {
                 .flatten()
                 .unwrap_or_else(|| Uuid::new_v4());
 
-            let mut sessions = application_state.sessions.lock().await;
-
-            if !sessions.contains_key(&sid) {
-                sessions.insert(sid, Session {
-                    id: sid,
-                });
-            }
-
-            if let Some(session) = sessions.get(&sid) {
-                request.cookies().add_private(
-                    Cookie::build(("sid", session.id.to_string()))
-                        .same_site(SameSite::Lax)
-                        .build()
-                );
-
-                Outcome::Success((*session).clone())
-            } else {
-                Outcome::Error((Status::InternalServerError, anyhow!("Could not get the session from application state!")))
-            }
+            let session = application_state.get_session(sid).await;
+            Outcome::Success(session)
         } else {
             Outcome::Error((Status::InternalServerError, anyhow!("Could not get application state!")))
         }
     }
-}
-
-
-#[get("/login/github")]
-fn github_login(application_state: &State<ApplicationState>, cookies: &CookieJar<'_>) -> Redirect {
-    // let oauth2 = &application_state.oauth2;
-    //
-    // let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
-    //
-    // let (github_auth_url, csrf_token) = oauth2.authorize_url(CsrfToken::new_random)
-    //     .add_scope(Scope::new("user:read".to_string()))
-    //     .set_pkce_challenge(pkce_challenge)
-    //     .url();
-    //
-    //
-    // application_state.pkce_verifiers.insert(pkce_verifier, CSRF_TIMEOUT);
-    //
-    // // application_state.csrf_tokens.insert(csrf_token.secret().to_string());
-    //
-    //
-    // // save the csrf token as secret cookie in the client
-    // // I am not really sure if this best practice
-    // // cookies.add_private(
-    // //     Cookie::build(("csrf", pkce_verifier.secret()))
-    // //         .same_site(SameSite::Lax)
-    // //         .build());
-    //
-    // Redirect::to(github_auth_url.to_string())
-    Redirect::to("/")
-}
-
-
-#[get("/auth/github?<code>&<state>")]
-async fn github_callback(application_state: &State<ApplicationState>, cookies: &CookieJar<'_>, code: &str, state: &str) -> Redirect
-{
-    // let oauth2 = &application_state.oauth2;
-    // let csrf_token = application_state.csrf_tokens.pop(&state.to_string()).map(|s| PkceCodeVerifier(s));
-    //
-    // if let Some(csrf_token) = csrf_token {
-    //     let token = oauth2
-    //         .exchange_code(AuthorizationCode::new(code.to_string()))
-    //         .set_pkce_verifier(csrf_token)
-    //         .request_async(async_http_client)
-    //         .await;
-    //
-    //     if let Ok(token) = token {
-    //         let token = token.access_token().secret().clone();
-    //
-    //         cookies.add_private(
-    //             Cookie::build(("token", token.clone()))
-    //                 .same_site(SameSite::Lax)
-    //                 .build()
-    //         );
-    //
-    //         let github = GithubClient::new(&token);
-    //         if let Ok(user) = github.get_user().await {
-    //             debug!("Welcome {:?}", user);
-    //             info!("Welcome {:?}", user.login);
-    //             cookies.add_private(
-    //                 Cookie::build(("username", user.login))
-    //                     .same_site(SameSite::Lax)
-    //                     .build()
-    //             );
-    //         } else {
-    //             warn!("Could not retrieve username!");
-    //         };
-    //     } else {
-    //         warn!("Could not retrieve token!");
-    //     }
-    // }
-    //
-
-    Redirect::to("/")
 }
 
 #[get("/logout")]
@@ -190,25 +112,23 @@ fn logout(cookies: &CookieJar<'_>) -> Redirect {
 }
 
 #[get("/")]
-fn index(cookies: &CookieJar<'_>, session: Session) -> Template {
-    let logged_in = if let Some(_) = cookies.get_private("token") {
-        true
-    } else {
-        false
-    };
+async fn index(cookies: &CookieJar<'_>, mut session: Session) -> Template {
 
-
-    let username = if let Some(cookie) = cookies.get_private("username") {
-        let value = cookie.value_trimmed();
-        Some(value.to_string())
-    } else {
-        None
-    };
+    let foo = session.foo().await;
+    info!("Session: {:?}", foo);
 
     Template::render("index", context! {
-        logged_in: logged_in,
-        username: username,
+        logged_in: false,
+        username: "",
     })
+}
+
+#[derive(Debug, Deserialize)]
+struct OAuthConfig {
+    client_id: String,
+    client_secret: String,
+    redirect_uri: String,
+    token_url: String,
 }
 
 
@@ -232,15 +152,6 @@ fn oauth2_client(figment: &Figment) -> Result<BasicClient, anyhow::Error> {
     ).set_redirect_uri(oauth2::RedirectUrl::new(redirect_uri.to_string())?))
 }
 
-
-#[derive(Debug, Deserialize)]
-struct OAuthConfig {
-    client_id: String,
-    client_secret: String,
-    redirect_uri: String,
-    token_url: String,
-}
-
 #[launch]
 fn rocket() -> _ {
     let rocket = rocket::build();
@@ -256,6 +167,6 @@ fn rocket() -> _ {
             sessions: Mutex::new(HashMap::new()),
         })
         .mount("/", FileServer::from(relative!("static")))
-        .mount("/", routes![index, github_callback, github_login, logout])
+        .mount("/", routes![index,  logout])
         .attach(Template::fairing())
 }
