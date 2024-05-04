@@ -36,7 +36,7 @@ impl TryFrom<OAuthConfig> for OAuth {
 
 
 #[get("/auth/github?<code>&<state>")]
-pub async fn github_callback(oauth: &State<OAuth>, mut session: Session<SessionData>, code: &str, state: &str) -> Redirect
+pub async fn github_callback(oauth: &State<OAuth>, session: Session<SessionData>, code: &str, state: &str) -> Redirect
 {
     let (csrf_token, pkce_verifier) = {
         let mut session_data = session.get_value().await;
@@ -70,7 +70,7 @@ pub async fn github_callback(oauth: &State<OAuth>, mut session: Session<SessionD
                 .request_async(async_http_client)
                 .await;
 
-            let token = match token {
+            match token {
                 Err(e) => {
                     warn!("Could not retrieve token: {:?}", e);
                     return Redirect::to("/");
@@ -85,7 +85,7 @@ pub async fn github_callback(oauth: &State<OAuth>, mut session: Session<SessionD
                         session_data.user = user;
                     }
                 }
-            };
+            }
         }
     }
     Redirect::to("/")

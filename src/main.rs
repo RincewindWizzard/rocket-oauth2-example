@@ -8,31 +8,17 @@ extern crate rocket;
 
 use crate::auth::OAuthConfig;
 use crate::auth::OAuth;
-use rocket::fairing::{AdHoc, Fairing, Info, Kind};
-use oauth2::{AccessToken, PkceCodeVerifier};
+use oauth2::{PkceCodeVerifier};
 use crate::session::Session;
-use std::sync::Arc;
 use std::env;
-use std::time::{Duration, Instant};
-use tokio::time::sleep;
-use anyhow::anyhow;
-use oauth2::{AuthorizationCode, CsrfToken, PkceCodeChallenge, Scope, TokenResponse};
-use rocket::{Build, Config, Data, Orbit, Request, Response, Rocket, State, tokio};
-use rocket::figment::Figment;
+use std::time::{Duration};
+use oauth2::{CsrfToken};
+use rocket::{tokio};
 use rocket::fs::FileServer;
 use rocket::fs::relative;
-use rocket::http::{Cookie, CookieJar, SameSite, Status};
-use rocket::http::uri::Query;
-use rocket::response::Redirect;
 use rocket_dyn_templates::{context, Template};
-use serde::Deserialize;
-use oauth2::reqwest::async_http_client;
-use crate::github_api::{GithubClient, User};
-use std::collections::HashMap;
+use crate::github_api::{User};
 use oauth2::basic::BasicTokenResponse;
-use rocket::futures::lock::Mutex;
-use rocket::request::{FromRequest, Outcome};
-use uuid::Uuid;
 use crate::session::SessionManager;
 
 
@@ -59,9 +45,9 @@ impl Default for SessionData {
 }
 
 #[get("/")]
-async fn index(mut session: Session<SessionData>) -> Template {
+async fn index(session: Session<SessionData>) -> Template {
     let context = {
-        let mut session_data = session.get_value().await;
+        let session_data = session.get_value().await;
 
         let username = session_data.user
             .as_ref()

@@ -88,8 +88,8 @@ impl<T> SessionManager<T>
     pub async fn get_next_expiration(&self) -> Instant {
         if let Some(timeout) = self.expiration {
             let mut next_expiration = Instant::now() + timeout;
-            let mut sessions = self.sessions.lock().await;
-            for (sid, session) in sessions.iter() {
+            let sessions = self.sessions.lock().await;
+            for (_, session) in sessions.iter() {
                 if session.last_access + timeout < next_expiration {
                     next_expiration = session.last_access + timeout;
                 }
@@ -176,10 +176,7 @@ impl SessionIdStore for CookieJar<'_> {
             .flatten()
             .unwrap_or_else(|| {
                 let sid = Uuid::new_v4();
-                self.add_private(
-                    Cookie::build(("sid", sid.to_string()))
-                        .same_site(SameSite::Lax)
-                        .build());
+                self.set_session_id(&sid);
                 sid
             })
     }
