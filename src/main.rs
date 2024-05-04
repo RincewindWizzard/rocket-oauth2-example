@@ -5,21 +5,20 @@ mod auth;
 #[macro_use]
 extern crate rocket;
 
-use crate::auth::SessionData;
-use crate::auth::{User};
+
+use crate::auth::AuthSession;
 use crate::auth::OAuthConfig;
 use crate::auth::OAuth;
-use oauth2::{PkceCodeVerifier};
-use crate::session::Session;
+use crate::auth::User;
 use std::env;
 use std::time::{Duration};
-use oauth2::{CsrfToken};
+
 use rocket::{tokio};
 use rocket::fs::FileServer;
 use rocket::fs::relative;
 use rocket_dyn_templates::{context, Template};
 
-use oauth2::basic::BasicTokenResponse;
+
 use crate::session::SessionManager;
 
 
@@ -56,12 +55,12 @@ fn rocket() -> _ {
             .expect("Could not parse OAuth config from figment!"))
         .expect("Could not initialize OAuth!");
 
-    let sessions: SessionManager<SessionData> = SessionManager::new(MONTH);
+    let sessions: SessionManager<AuthSession> = SessionManager::new(MONTH);
     let session_fairing = sessions.fairing();
 
     rocket
         .manage::<OAuth>(oauth2)
-        .manage::<SessionManager<SessionData>>(sessions)
+        .manage::<SessionManager<AuthSession>>(sessions)
         .mount("/", FileServer::from(relative!("static")))
         .mount("/", routes![index_user, index,  auth::logout, auth::github_login, auth::github_callback])
         .attach(Template::fairing())
