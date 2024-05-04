@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use oauth2::AccessToken;
 
 const GITHUB_API_GATEWAY: &str = "https://api.github.com/";
 const USER_AGENT: &str = "rocket-web-oauth2-example";
@@ -36,15 +37,15 @@ impl User {
 
 
 pub struct GithubClient {
-    access_token: String,
+    access_token: AccessToken,
     http: reqwest::Client,
 }
 
 impl GithubClient {
-    pub fn new(token: &str) -> GithubClient {
+    pub fn new(token: &AccessToken) -> GithubClient {
         let http = reqwest::Client::new();
         GithubClient {
-            access_token: token.to_string(),
+            access_token: token.clone(),
             http,
         }
     }
@@ -55,7 +56,7 @@ impl GithubClient {
             .get(format!("{}{}", GITHUB_API_GATEWAY, "user"))
             .header("user-agent", USER_AGENT)
             .header("Accept", MIMETYPE_JSON)
-            .header("Authorization", format!("Bearer {}", self.access_token))
+            .header("Authorization", format!("Bearer {}", self.access_token.secret()))
             .header("X-GitHub-Api-Version", X_GIT_HUB_API_VERSION)
             .send()
             .await?;
