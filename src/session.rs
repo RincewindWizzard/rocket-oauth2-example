@@ -1,3 +1,5 @@
+use rocket::futures::lock::MutexGuard;
+
 use rocket::http::SameSite;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,12 +19,15 @@ pub struct SessionManager<T> {
 #[derive(Debug, Clone)]
 pub struct Session<T> {
     id: Uuid,
-    pub value: Arc<Mutex<T>>,
+    value: Arc<Mutex<T>>,
 }
 
 impl<T> Session<T> {
     pub fn get_id(&self) -> Uuid {
         self.id
+    }
+    pub async fn get_value<'a>(&'a self) -> MutexGuard<'a, T> {
+        self.value.lock().await
     }
 }
 
@@ -76,18 +81,12 @@ impl<'r, T> FromRequest<'r> for Session<T>
                 .cookies()
                 .get_private("sid")
                 .map(|c| c.value().to_string())
-                .map(|sid| {
-                    info!("Session Id found: {}", sid);
-                    sid
-                })
                 .map(|sid| Uuid::parse_str(&*sid).ok())
                 .flatten()
                 .unwrap_or_else(|| {
-                    info!("Create new session id. {:?}", request.cookies());
                     Uuid::new_v4()
                 });
 
-            info!("Session ID: {}", sid);
             let session = session_manager.get_session(sid).await;
 
             request.cookies().add_private(

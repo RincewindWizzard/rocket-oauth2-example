@@ -81,7 +81,7 @@ async fn github_callback(oauth: &State<OAuth>, mut session: Session<SessionData>
     info!("Github token {} for user {} retrieved.", token, user.clone().map(|user| user.login).unwrap_or("".to_string()));
 
     {
-        let mut session_data = session.value.lock().await;
+        let mut session_data = session.get_value().await;
         session_data.github_api_token = Some(token);
         session_data.user = user;
     }
@@ -90,13 +90,17 @@ async fn github_callback(oauth: &State<OAuth>, mut session: Session<SessionData>
 }
 
 #[get("/login/github")]
-fn github_login(oauth: &State<OAuth>, session: Session<SessionData>) -> Redirect {
+async fn github_login(oauth: &State<OAuth>, session: Session<SessionData>) -> Redirect {
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
 
     let (github_auth_url, csrf_token) = oauth.authorize_url(CsrfToken::new_random)
         .add_scope(Scope::new("user:read".to_string()))
         .set_pkce_challenge(pkce_challenge)
         .url();
+
+    {
+        let session_data = session.get_value().await;
+    }
 
     Redirect::to(github_auth_url.to_string())
 }
@@ -111,10 +115,8 @@ fn logout(cookies: &CookieJar<'_>) -> Redirect {
 #[get("/")]
 async fn index(mut session: Session<SessionData>) -> Template {
     let context = {
-        let mut session_data = session.value.lock().await;
+        let mut session_data = session.get_value().await;
         session_data.visits = session_data.visits + 1;
-
-        info!("Session: {:?}", session_data);
 
 
         let username = if let Some(user) = &session_data.user {
