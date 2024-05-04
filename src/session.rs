@@ -12,12 +12,16 @@ use rocket::http::{Cookie, Status};
 use rocket::request::{FromRequest, Outcome};
 use uuid::Uuid;
 
+/// Thread safe (and cloneable via Arc) manager for client sessions.
+/// Supports expiration for stale sessions.
 #[derive(Debug)]
 pub struct SessionManager<T> {
     sessions: Arc<Mutex<HashMap<Uuid, Session<T>>>>,
     expiration: Option<Duration>,
 }
 
+/// This is a reference object and can be cloned.
+/// If you want to access the content you have to acquire a lock with get_value.
 #[derive(Debug, Clone)]
 pub struct Session<T> {
     id: Uuid,
@@ -29,11 +33,14 @@ impl<T> Session<T> {
     pub fn get_id(&self) -> Uuid {
         self.id
     }
+
+    /// Acquires a lock for the content.
     pub async fn get_value<'a>(&'a self) -> MutexGuard<'a, T> {
         self.value.lock().await
     }
 }
 
+/// Creates a new session from an Uuid.
 impl<T> From<Uuid> for Session<T>
     where T: Default
 {
@@ -46,6 +53,7 @@ impl<T> From<Uuid> for Session<T>
     }
 }
 
+/// Creates an empty session manager with no expiration.
 impl<T> Default for SessionManager<T> {
     fn default() -> Self {
         SessionManager {
@@ -55,6 +63,7 @@ impl<T> Default for SessionManager<T> {
     }
 }
 
+/// Creates a shallow copy of the session manager for usage in multiple threads/owners.
 impl<T> Clone for SessionManager<T> {
     fn clone(&self) -> Self {
         SessionManager {
@@ -64,7 +73,8 @@ impl<T> Clone for SessionManager<T> {
     }
 }
 
-
+/// Thread safe (and cloneable via Arc) manager for client sessions.
+/// Supports expiration for stale sessions.
 impl<T> SessionManager<T>
     where T: Default
 {
@@ -73,6 +83,8 @@ impl<T> SessionManager<T>
         session_manager.expiration = Some(expiration);
         session_manager
     }
+
+    /// Gets a session from the memory.
     pub async fn get_session(&self, sid: Uuid) -> Session<T> {
         let mut sessions = self.sessions.lock().await;
         let session = sessions.entry(sid).or_insert_with(|| Session::from(sid));
@@ -85,11 +97,14 @@ impl<T> SessionManager<T>
         }
     }
 
+    /// Removes a session.
     pub async fn remove_session(&self, sid: Uuid) {
         let mut sessions = self.sessions.lock().await;
         sessions.remove(&sid);
     }
 
+    /// Returns the instant when the next session will expire.
+    /// Returns max duration if no sessions are present.
     pub async fn get_next_expiration(&self) -> Instant {
         if let Some(timeout) = self.expiration {
             let mut next_expiration = Instant::now() + timeout;
@@ -106,6 +121,8 @@ impl<T> SessionManager<T>
     }
 
 
+    /// Removes all expired sessions.
+    /// Beware that it acquires a lock until the operation is done.
     pub async fn remove_expired_sessions(&self) {
         if let Some(timeout) = self.expiration {
             let mut remove = vec![];
@@ -128,6 +145,9 @@ impl<T> SessionManager<T>
     }
 }
 
+/// To avoid memory leaks, expired sessions regularly need to be removed.
+/// This is done in this fairing, which spawns an async loop calling [`SessionManager::remove_expired_sessions`](struct.SessionManager.html#method.remove_expired_sessions) at regular intervals.
+/// TODO: it might be necessary to gracefully stop the loop on_shutdown
 #[rocket::async_trait]
 impl<T> Fairing for SessionManager<T>
     where T: Send + Default + 'static
@@ -152,6 +172,7 @@ impl<T> Fairing for SessionManager<T>
     }
 }
 
+/// Creates a new Session with a random session id.
 impl<T> Default for Session<T>
     where T: Default
 {
@@ -173,6 +194,7 @@ trait SessionIdStore {
 /// Implements SessionIdStore for cookies.
 /// The value is stored in "sid".
 impl SessionIdStore for CookieJar<'_> {
+    /// Get the session id from cookie field "sid".
     fn get_session_id(&self) -> Uuid {
         self
             .get_private("sid")
@@ -186,6 +208,7 @@ impl SessionIdStore for CookieJar<'_> {
             })
     }
 
+    // Sets the session id in the cookie field "sid".
     fn set_session_id(&self, sid: &Uuid) {
         self.add_private(
             Cookie::build(("sid", sid.to_string()))
@@ -194,6 +217,8 @@ impl SessionIdStore for CookieJar<'_> {
     }
 }
 
+/// Reads the session id from the cookie "sid" and retrieves the session from the session manager.
+/// If no session id is found a new session is created.
 #[rocket::async_trait]
 impl<'r, T> FromRequest<'r> for Session<T>
     where T: Sync + Send + Default + 'r + 'static
