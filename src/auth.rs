@@ -1,15 +1,70 @@
-use oauth2::{AuthorizationCode, CsrfToken, PkceCodeChallenge, Scope, TokenResponse};
+use anyhow::anyhow;
+use oauth2::{AuthorizationCode, CsrfToken, PkceCodeChallenge, PkceCodeVerifier, Scope, TokenResponse};
+use oauth2::basic::BasicTokenResponse;
 use oauth2::reqwest::async_http_client;
-use rocket::http::{Cookie, CookieJar};
+use rocket::http::{Cookie, CookieJar, Status};
+use rocket::request::{FromRequest, Outcome};
 use rocket::response::Redirect;
-use rocket::State;
-use serde_derive::Deserialize;
-use crate::{SessionData};
+use rocket::{Request, State};
+use serde_derive::{Deserialize, Serialize};
 use crate::github_api::GithubClient;
 use crate::session::{Session, SessionManager};
 
 pub type OAuth = oauth2::basic::BasicClient;
 
+
+/// Excerpt User data from the Github API
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct User {
+    pub login: String,
+    pub avatar_url: String,
+    pub name: String,
+    pub location: String,
+    pub email: String,
+}
+
+
+#[derive(Debug)]
+pub struct SessionData {
+    pkce_verifier: Option<PkceCodeVerifier>,
+    csrf_token: Option<CsrfToken>,
+    github_api_token: Option<BasicTokenResponse>,
+    user: Option<User>,
+}
+
+
+impl Default for SessionData {
+    fn default() -> Self {
+        SessionData {
+            pkce_verifier: None,
+            csrf_token: None,
+            github_api_token: None,
+            user: None,
+        }
+    }
+}
+
+#[rocket::async_trait]
+impl<'r> FromRequest<'r> for User
+{
+    type Error = anyhow::Error;
+
+    async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
+        if let Outcome::Success(session) = request.guard::<Session<SessionData>>().await {
+            let user = &session.get_value().await.user;
+            match user {
+                None => {
+                    Outcome::Forward(Status::Forbidden)
+                }
+                Some(user) => {
+                    Outcome::Success(user.clone())
+                }
+            }
+        } else {
+            Outcome::Error((Status::InternalServerError, anyhow!("Could not get application state!")))
+        }
+    }
+}
 
 /// Configuration for OAuth. Can be parsed from Figment.
 #[derive(Debug, Deserialize)]

@@ -5,6 +5,8 @@ mod auth;
 #[macro_use]
 extern crate rocket;
 
+use crate::auth::SessionData;
+use crate::auth::{User};
 use crate::auth::OAuthConfig;
 use crate::auth::OAuth;
 use oauth2::{PkceCodeVerifier};
@@ -16,7 +18,7 @@ use rocket::{tokio};
 use rocket::fs::FileServer;
 use rocket::fs::relative;
 use rocket_dyn_templates::{context, Template};
-use crate::github_api::{User};
+
 use oauth2::basic::BasicTokenResponse;
 use crate::session::SessionManager;
 
@@ -24,43 +26,20 @@ use crate::session::SessionManager;
 const MONTH: Duration = Duration::from_secs(60 * 60 * 24 * 28);
 
 
-#[derive(Debug)]
-struct SessionData {
-    pkce_verifier: Option<PkceCodeVerifier>,
-    csrf_token: Option<CsrfToken>,
-    github_api_token: Option<BasicTokenResponse>,
-    user: Option<User>,
-}
-
-impl Default for SessionData {
-    fn default() -> Self {
-        SessionData {
-            pkce_verifier: None,
-            csrf_token: None,
-            github_api_token: None,
-            user: None,
-        }
-    }
-}
-
 #[get("/")]
-async fn index(session: Session<SessionData>) -> Template {
-    let context = {
-        let session_data = session.get_value().await;
+async fn index_user(user: User) -> Template {
+    Template::render("index", context! {
+            logged_in: true,
+            username: user.login,
+        })
+}
 
-        let username = session_data.user
-            .as_ref()
-            .map(|x| x.login.clone())
-            .unwrap_or("".to_string());
-
-
-        context! {
-            logged_in: session_data.user.is_some(),
-            username: username,
-        }
-    };
-
-    Template::render("index", context)
+#[get("/", rank = 2)]
+async fn index() -> Template {
+    Template::render("index", context! {
+            logged_in: false,
+            username: "",
+        })
 }
 
 
@@ -84,7 +63,7 @@ fn rocket() -> _ {
         .manage::<OAuth>(oauth2)
         .manage::<SessionManager<SessionData>>(sessions)
         .mount("/", FileServer::from(relative!("static")))
-        .mount("/", routes![index,  auth::logout, auth::github_login, auth::github_callback])
+        .mount("/", routes![index_user, index,  auth::logout, auth::github_login, auth::github_callback])
         .attach(Template::fairing())
         .attach(session_fairing)
 }
