@@ -5,7 +5,7 @@ It includes [Bulma](https://bulma.io/) in its static path and uses [Handlebars T
 
 You have
 to [register your own application on Github](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app)
-and insert your application credential
+and insert your application credential into [Rocket.toml](Rocket.toml).
 
     [default.oauth.github]
     client_id = "<client_id>"
