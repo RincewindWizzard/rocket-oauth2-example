@@ -21,8 +21,11 @@ pub struct User {
 
 impl User {
     fn parse(doc: Value) -> Option<User> {
+        let login = doc.get("login")?.to_string();
+        let login = login.trim_matches(|c: char| c == '"' || c.is_whitespace());
+
         Some(User {
-            login: doc.get("login")?.to_string(),
+            login: login.to_string(),
             avatar_url: doc.get("avatar_url")?.to_string(),
             name: doc.get("name")?.to_string(),
             location: doc.get("location")?.to_string(),

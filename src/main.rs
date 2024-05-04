@@ -6,6 +6,7 @@ mod config;
 #[macro_use]
 extern crate rocket;
 
+use oauth2::PkceCodeVerifier;
 use crate::session::Session;
 use std::sync::Arc;
 use std::env;
@@ -36,9 +37,9 @@ const CSRF_TIMEOUT: Duration = Duration::from_secs(60 * 10);
 
 type OAuth = oauth2::basic::BasicClient;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct SessionData {
-    // pkce_verifier: Option<PkceCodeVerifier>,
+    pkce_verifier: Option<PkceCodeVerifier>,
     csrf_token: Option<CsrfToken>,
     github_api_token: Option<String>,
     visits: i64,
@@ -48,6 +49,7 @@ struct SessionData {
 impl Default for SessionData {
     fn default() -> Self {
         SessionData {
+            pkce_verifier: None,
             csrf_token: None,
             github_api_token: None,
             visits: 0,
@@ -56,36 +58,62 @@ impl Default for SessionData {
     }
 }
 
-
 #[get("/auth/github?<code>&<state>")]
 async fn github_callback(oauth: &State<OAuth>, mut session: Session<SessionData>, code: &str, state: &str) -> Redirect
 {
-    let token = oauth
-        .exchange_code(AuthorizationCode::new(code.to_string()))
-        // .set_pkce_verifier(csrf_token)
-        .request_async(async_http_client)
-        .await;
-
-    let token = match token {
-        Err(e) => {
-            warn!("Could not retrieve token: {:?}", e);
-            return Redirect::to("/");
-        }
-        Ok(token) => { token.access_token().secret().clone() }
+    let (csrf_token, pkce_verifier) = {
+        let mut session_data = session.get_value().await;
+        (session_data.csrf_token.take(), session_data.pkce_verifier.take())
     };
 
 
-    let github = GithubClient::new(&token);
-    let user = github.get_user().await.ok();
-
-    info!("Github token {} for user {} retrieved.", token, user.clone().map(|user| user.login).unwrap_or("".to_string()));
-
-    {
-        let mut session_data = session.get_value().await;
-        session_data.github_api_token = Some(token);
-        session_data.user = user;
+    match csrf_token {
+        None => {
+            warn!("[{}] No known csrf_token!", session.get_id());
+            return Redirect::to("/");
+        }
+        Some(csrf_token) => {
+            if state != csrf_token.secret() {
+                warn!("[{}] csrf_token mismatch!", session.get_id());
+                return Redirect::to("/");
+            }
+        }
     }
 
+
+    match pkce_verifier {
+        None => {
+            warn!("[{}] Could not validate pkce_verifier!", session.get_id());
+            return Redirect::to("/");
+        }
+        Some(pkce_verifier) => {
+            let token = oauth
+                .exchange_code(AuthorizationCode::new(code.to_string()))
+                .set_pkce_verifier(pkce_verifier)
+                .request_async(async_http_client)
+                .await;
+
+            let token = match token {
+                Err(e) => {
+                    warn!("Could not retrieve token: {:?}", e);
+                    return Redirect::to("/");
+                }
+                Ok(token) => {
+                    let token = token.access_token().secret().clone();
+                    let github = GithubClient::new(&token);
+                    let user = github.get_user().await.ok();
+
+                    info!("Github token {} for user {} retrieved.", token, user.clone().map(|user| user.login).unwrap_or("".to_string()));
+
+                    {
+                        let mut session_data = session.get_value().await;
+                        session_data.github_api_token = Some(token);
+                        session_data.user = user;
+                    }
+                }
+            };
+        }
+    }
     Redirect::to("/")
 }
 
@@ -99,7 +127,9 @@ async fn github_login(oauth: &State<OAuth>, session: Session<SessionData>) -> Re
         .url();
 
     {
-        let session_data = session.get_value().await;
+        let mut session_data = session.get_value().await;
+        session_data.pkce_verifier = Some(pkce_verifier);
+        session_data.csrf_token = Some(csrf_token);
     }
 
     Redirect::to(github_auth_url.to_string())
