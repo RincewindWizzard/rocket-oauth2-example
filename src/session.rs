@@ -9,9 +9,7 @@ use rocket::futures::lock::Mutex;
 use rocket::{Orbit, Request, Rocket, State, tokio};
 use rocket::fairing::{Fairing, Info, Kind};
 use rocket::http::{Cookie, Status};
-use rocket::http::private::cookie::Expiration;
 use rocket::request::{FromRequest, Outcome};
-use rocket::tokio::time::{sleep, timeout};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -136,7 +134,7 @@ impl<T> Fairing for SessionManager<T>
         }
     }
 
-    async fn on_liftoff(&self, rocket: &Rocket<Orbit>) {
+    async fn on_liftoff(&self, _rocket: &Rocket<Orbit>) {
         if let Some(_) = self.expiration {
             let manager = self.clone();
             tokio::spawn(async move {

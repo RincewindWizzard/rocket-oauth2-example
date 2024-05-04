@@ -1,12 +1,13 @@
 mod github_api;
-mod timeout_set;
 mod session;
 mod config;
-mod auth_routes;
+mod auth;
 
 #[macro_use]
 extern crate rocket;
 
+use crate::auth::OAuthConfig;
+use crate::auth::OAuth;
 use rocket::fairing::{AdHoc, Fairing, Info, Kind};
 use oauth2::{AccessToken, PkceCodeVerifier};
 use crate::session::Session;
@@ -33,13 +34,10 @@ use rocket::futures::lock::Mutex;
 use rocket::request::{FromRequest, Outcome};
 use uuid::Uuid;
 use crate::session::SessionManager;
-use crate::timeout_set::TimeoutSet;
 
-const CSRF_TIMEOUT: Duration = Duration::from_secs(60 * 10);
 
 const MONTH: Duration = Duration::from_secs(60 * 60 * 24 * 28);
 
-type OAuth = oauth2::basic::BasicClient;
 
 #[derive(Debug)]
 struct SessionData {
@@ -85,7 +83,14 @@ async fn index(mut session: Session<SessionData>) -> Template {
 fn rocket() -> _ {
     let rocket = rocket::build();
     let figment = rocket.figment();
-    let oauth2 = config::oauth2_client(figment).expect("OAuth2 config could not be loaded!");
+
+    let oauth2 = OAuth::try_from(
+        figment
+            .find_value("oauth.github")
+            .expect("Could not find OAuth config in figment!")
+            .deserialize::<OAuthConfig>()
+            .expect("Could not parse OAuth config from figment!"))
+        .expect("Could not initialize OAuth!");
 
     let sessions: SessionManager<SessionData> = SessionManager::new(MONTH);
     let session_fairing = sessions.fairing();
@@ -94,7 +99,7 @@ fn rocket() -> _ {
         .manage::<OAuth>(oauth2)
         .manage::<SessionManager<SessionData>>(sessions)
         .mount("/", FileServer::from(relative!("static")))
-        .mount("/", routes![index,  auth_routes::logout, auth_routes::github_login, auth_routes::github_callback])
+        .mount("/", routes![index,  auth::logout, auth::github_login, auth::github_callback])
         .attach(Template::fairing())
         .attach(session_fairing)
 }

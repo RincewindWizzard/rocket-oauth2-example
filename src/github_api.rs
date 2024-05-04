@@ -9,7 +9,7 @@ const X_GIT_HUB_API_VERSION: &str = "2022-11-28";
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
 
-
+/// Excerpt User data from the Github API
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct User {
     pub login: String,
@@ -21,6 +21,7 @@ pub struct User {
 
 
 impl User {
+    /// Parse the excerpt user from the github response
     fn parse(doc: Value) -> Option<User> {
         let login = doc.get("login")?.to_string();
         let login = login.trim_matches(|c: char| c == '"' || c.is_whitespace());
@@ -35,7 +36,7 @@ impl User {
     }
 }
 
-
+/// A minimal Github API Client to retrieve some userdata from the REST API.
 pub struct GithubClient {
     access_token: AccessToken,
     http: reqwest::Client,
@@ -50,7 +51,7 @@ impl GithubClient {
         }
     }
 
-
+    /// Returns information about the currently authenticated user.
     pub async fn get_user(&self) -> Result<User, anyhow::Error> {
         let response = self.http
             .get(format!("{}{}", GITHUB_API_GATEWAY, "user"))
