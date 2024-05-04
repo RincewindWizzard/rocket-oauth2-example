@@ -68,12 +68,12 @@ impl<T> Clone for SessionManager<T> {
 impl<T> SessionManager<T>
     where T: Default
 {
-    pub(crate) fn new(expiration: Duration) -> SessionManager<T> {
+    pub fn new(expiration: Duration) -> SessionManager<T> {
         let mut session_manager = SessionManager::default();
         session_manager.expiration = Some(expiration);
         session_manager
     }
-    async fn get_session(&self, sid: Uuid) -> Session<T> {
+    pub async fn get_session(&self, sid: Uuid) -> Session<T> {
         let mut sessions = self.sessions.lock().await;
         let session = sessions.entry(sid).or_insert_with(|| Session::from(sid));
         session.last_access = Instant::now();
@@ -83,6 +83,11 @@ impl<T> SessionManager<T>
             last_access: session.last_access,
             value: session.value.clone(),
         }
+    }
+
+    pub async fn remove_session(&self, sid: Uuid) {
+        let mut sessions = self.sessions.lock().await;
+        sessions.remove(&sid);
     }
 
     pub async fn get_next_expiration(&self) -> Instant {

@@ -1,4 +1,3 @@
-
 use oauth2::{AuthorizationCode, CsrfToken, PkceCodeChallenge, Scope, TokenResponse};
 use oauth2::reqwest::async_http_client;
 use rocket::http::{Cookie, CookieJar};
@@ -7,11 +6,12 @@ use rocket::State;
 use serde_derive::Deserialize;
 use crate::{SessionData};
 use crate::github_api::GithubClient;
-use crate::session::Session;
+use crate::session::{Session, SessionManager};
 
 pub type OAuth = oauth2::basic::BasicClient;
 
 
+/// Configuration for OAuth. Can be parsed from Figment.
 #[derive(Debug, Deserialize)]
 pub struct OAuthConfig {
     client_id: String,
@@ -21,6 +21,7 @@ pub struct OAuthConfig {
     redirect_uri: String,
 }
 
+/// Creates a new OAuth client from OAuthConfig.
 impl TryFrom<OAuthConfig> for OAuth {
     type Error = anyhow::Error;
 
@@ -35,6 +36,30 @@ impl TryFrom<OAuthConfig> for OAuth {
 }
 
 
+/// Redirects th Client to the Github Login Page.
+/// Stores the pkce_challenge and csrf_token in the session data.
+#[get("/login/github")]
+pub async fn github_login(oauth: &State<OAuth>, session: Session<SessionData>) -> Redirect {
+    let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
+
+    let (github_auth_url, csrf_token) = oauth.authorize_url(CsrfToken::new_random)
+        .add_scope(Scope::new("user:read".to_string()))
+        .set_pkce_challenge(pkce_challenge)
+        .url();
+
+    {
+        let mut session_data = session.get_value().await;
+        session_data.pkce_verifier = Some(pkce_verifier);
+        session_data.csrf_token = Some(csrf_token);
+    }
+
+    Redirect::to(github_auth_url.to_string())
+}
+
+
+/// Callback after successfully logging in to Github.
+/// Checks the  pkce_verifier and  csrf_token from the session.
+/// Uses the Github REST API to get the username of the logged in user.
 #[get("/auth/github?<code>&<state>")]
 pub async fn github_callback(oauth: &State<OAuth>, session: Session<SessionData>, code: &str, state: &str) -> Redirect
 {
@@ -91,26 +116,12 @@ pub async fn github_callback(oauth: &State<OAuth>, session: Session<SessionData>
     Redirect::to("/")
 }
 
-#[get("/login/github")]
-pub async fn github_login(oauth: &State<OAuth>, session: Session<SessionData>) -> Redirect {
-    let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
 
-    let (github_auth_url, csrf_token) = oauth.authorize_url(CsrfToken::new_random)
-        .add_scope(Scope::new("user:read".to_string()))
-        .set_pkce_challenge(pkce_challenge)
-        .url();
-
-    {
-        let mut session_data = session.get_value().await;
-        session_data.pkce_verifier = Some(pkce_verifier);
-        session_data.csrf_token = Some(csrf_token);
-    }
-
-    Redirect::to(github_auth_url.to_string())
-}
-
+/// Removes the session id from the cookie and deletes the session from the session manager.
 #[get("/logout")]
-pub fn logout(cookies: &CookieJar<'_>) -> Redirect {
+pub async fn logout(cookies: &CookieJar<'_>, manager: &State<SessionManager<SessionData>>, session: Session<SessionData>) -> Redirect
+{
     cookies.remove_private(Cookie::build("sid"));
+    manager.remove_session(session.get_id()).await;
     Redirect::to("/")
 }

@@ -1,6 +1,5 @@
 mod github_api;
 mod session;
-mod config;
 mod auth;
 
 #[macro_use]
