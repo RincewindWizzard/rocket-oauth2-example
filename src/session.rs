@@ -1,20 +1,23 @@
-use std::time::{Duration, Instant};
+use std::time::{Duration};
 use rocket::futures::lock::MutexGuard;
-
+use crate::tokio::time::Instant;
 use rocket::http::{CookieJar, SameSite};
 use std::collections::HashMap;
 use std::sync::Arc;
 use anyhow::anyhow;
 use rocket::futures::lock::Mutex;
-use rocket::{Request, State};
+use rocket::{Orbit, Request, Rocket, State, tokio};
+use rocket::fairing::{Fairing, Info, Kind};
 use rocket::http::{Cookie, Status};
+use rocket::http::private::cookie::Expiration;
 use rocket::request::{FromRequest, Outcome};
+use rocket::tokio::time::{sleep, timeout};
 use uuid::Uuid;
-
 
 #[derive(Debug)]
 pub struct SessionManager<T> {
-    sessions: Mutex<HashMap<Uuid, Session<T>>>,
+    sessions: Arc<Mutex<HashMap<Uuid, Session<T>>>>,
+    expiration: Option<Duration>,
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +52,16 @@ impl<T> Default for SessionManager<T> {
     fn default() -> Self {
         SessionManager {
             sessions: Default::default(),
+            expiration: None,
+        }
+    }
+}
+
+impl<T> Clone for SessionManager<T> {
+    fn clone(&self) -> Self {
+        SessionManager {
+            sessions: self.sessions.clone(),
+            expiration: self.expiration,
         }
     }
 }
@@ -57,6 +70,11 @@ impl<T> Default for SessionManager<T> {
 impl<T> SessionManager<T>
     where T: Default
 {
+    pub(crate) fn new(expiration: Duration) -> SessionManager<T> {
+        let mut session_manager = SessionManager::default();
+        session_manager.expiration = Some(expiration);
+        session_manager
+    }
     async fn get_session(&self, sid: Uuid) -> Session<T> {
         let mut sessions = self.sessions.lock().await;
         let session = sessions.entry(sid).or_insert_with(|| Session::from(sid));
@@ -69,17 +87,64 @@ impl<T> SessionManager<T>
         }
     }
 
-    pub async fn remove_expired_sessions(&self, timeout: Duration) {
-        let mut remove = vec![];
-        let mut sessions = self.sessions.lock().await;
-        for (sid, session) in sessions.iter() {
-            if Instant::now() > session.last_access + timeout {
-                remove.push(sid.clone());
+    pub async fn get_next_expiration(&self) -> Instant {
+        if let Some(timeout) = self.expiration {
+            let mut next_expiration = Instant::now() + timeout;
+            let mut sessions = self.sessions.lock().await;
+            for (sid, session) in sessions.iter() {
+                if session.last_access + timeout < next_expiration {
+                    next_expiration = session.last_access + timeout;
+                }
+            }
+            next_expiration
+        } else {
+            Instant::now() + Duration::from_nanos(u64::MAX)
+        }
+    }
+
+
+    pub async fn remove_expired_sessions(&self) {
+        if let Some(timeout) = self.expiration {
+            let mut remove = vec![];
+            let mut sessions = self.sessions.lock().await;
+            for (sid, session) in sessions.iter() {
+                if Instant::now() > session.last_access + timeout {
+                    remove.push(sid.clone());
+                }
+            }
+
+            for sid in remove {
+                info!("Removed session \"{sid}\"");
+                sessions.remove(&sid);
             }
         }
+    }
 
-        for sid in remove {
-            sessions.remove(&sid);
+    pub fn fairing(&self) -> SessionManager<T> {
+        self.clone()
+    }
+}
+
+#[rocket::async_trait]
+impl<T> Fairing for SessionManager<T>
+    where T: Send + Default + 'static
+{
+    fn info(&self) -> Info {
+        Info {
+            name: "SessionManager Expiration loop",
+            kind: Kind::Liftoff | Kind::Request,
+        }
+    }
+
+    async fn on_liftoff(&self, rocket: &Rocket<Orbit>) {
+        if let Some(_) = self.expiration {
+            let manager = self.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep_until(manager.get_next_expiration().await).await;
+                    manager.remove_expired_sessions().await;
+                }
+            });
         }
     }
 }

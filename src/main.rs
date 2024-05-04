@@ -7,7 +7,7 @@ mod auth_routes;
 #[macro_use]
 extern crate rocket;
 
-use rocket::fairing::AdHoc;
+use rocket::fairing::{AdHoc, Fairing, Info, Kind};
 use oauth2::{AccessToken, PkceCodeVerifier};
 use crate::session::Session;
 use std::sync::Arc;
@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use anyhow::anyhow;
 use oauth2::{AuthorizationCode, CsrfToken, PkceCodeChallenge, Scope, TokenResponse};
-use rocket::{Config, Request, Rocket, State, tokio};
+use rocket::{Build, Config, Data, Orbit, Request, Response, Rocket, State, tokio};
 use rocket::figment::Figment;
 use rocket::fs::FileServer;
 use rocket::fs::relative;
@@ -36,6 +36,8 @@ use crate::session::SessionManager;
 use crate::timeout_set::TimeoutSet;
 
 const CSRF_TIMEOUT: Duration = Duration::from_secs(60 * 10);
+
+const MONTH: Duration = Duration::from_secs(60 * 60 * 24 * 28);
 
 type OAuth = oauth2::basic::BasicClient;
 
@@ -79,33 +81,20 @@ async fn index(mut session: Session<SessionData>) -> Template {
 }
 
 
-async fn run() {
-    let mut i = 0;
-    loop {
-        info!("Running in background {i}");
-        i = i + 1;
-        sleep(Duration::from_secs(1)).await;
-    }
-}
-
 #[launch]
 fn rocket() -> _ {
     let rocket = rocket::build();
     let figment = rocket.figment();
     let oauth2 = config::oauth2_client(figment).expect("OAuth2 config could not be loaded!");
 
-    let session_manager = SessionManager::default();
-
-    // session_manager.remove_expired_sessions(Duration::from_secs(60 * 60 * 24)).await;
-
+    let sessions: SessionManager<SessionData> = SessionManager::new(MONTH);
+    let session_fairing = sessions.fairing();
 
     rocket
         .manage::<OAuth>(oauth2)
-        .manage::<SessionManager<SessionData>>(session_manager)
+        .manage::<SessionManager<SessionData>>(sessions)
         .mount("/", FileServer::from(relative!("static")))
         .mount("/", routes![index,  auth_routes::logout, auth_routes::github_login, auth_routes::github_callback])
         .attach(Template::fairing())
-        .attach(AdHoc::on_liftoff("Run background loop", |_| Box::pin(async move {
-            tokio::spawn(run());
-        })))
+        .attach(session_fairing)
 }
